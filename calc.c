@@ -474,7 +474,7 @@ typedef struct {
 typedef Num (*Jitfn)();
 
 // Extend the jits code with given bytes.
-void jit_push(Jit *jit, u8 n, ...) {
+void jit_push(Jit *jit, int n, ...) {
     va_list bytes;
     va_start(bytes, n);
     for (u8 i = 0; i < n; i++) {
