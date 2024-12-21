@@ -1,14 +1,11 @@
 #include <assert.h>
 #include <elf.h>
 #include <stdarg.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -788,14 +785,14 @@ void write_program_to_file(Str s, Str outpath) {
 
 // Wrap native x86_64 machine instructions into a runnable ELF file.
 // `code_` is a function with the signature `() -> i64`. The final elf calls
-// this function and returns its return value as exit code.
-// TODO refactor to write i64 to stdout (exit is too narrow).
+// this function and writes the resulting 8 bytes to stdout.
 // Reference: man 5 elf. Also very helpful: https://formats.kaitai.io/elf/ and
 // https://github.com/kaitai-io/kaitai_struct_visualizer.
 // Compile a minimal hello world program statically with:
 //
 //      nasm -f elf64 hello.asm -o hello.o
 //      ld hello.o -o hello
+//      objdump -D hello
 //
 // ksv hello elf.ksy
 //
@@ -803,12 +800,20 @@ void write_program_to_file(Str s, Str outpath) {
 Str build_elf(Str code_) {
     u64 base_addr = 0x400000;
 
-    // Wrap function in `code_` into a call and exit() of the return value.
+    // Wrap function in `code_` into a call. Also see
+    // https://blog.rchapman.org/posts/Linux_System_Call_Table_for_x86_64/.
     u8 call[] = {
         // 0xcc,                      // int3 (debug break)
-        0xe8, 0x0a, 0x00, 0x00, 0x00, // call 0x40100f
-        0x48, 0x89, 0xc7,             // mov  rdi, rax
+        // TODO comment disassembly from debugger
+        0xe8, 0x21, 0x00, 0x00, 0x00, // call 0x401026
+        0x50,                         // push rax
+        0xb8, 0x01, 0x00, 0x00, 0x00, // mov  eax, 1 (write syscall)
+        0xbf, 0x01, 0x00, 0x00, 0x00, // mov  edi, 1 (fd: stdout)
+        0x48, 0x89, 0xe6,             // mov  rsi, rsp (buf: rax value on stack)
+        0xba, 0x08, 0x00, 0x00, 0x00, // mov  edx, 8 (count: sizeof(i64))
+        0x0f, 0x05,                   // syscall
         0xb8, 0x3c, 0x00, 0x00, 0x00, // mov  eax, 0x3c (exit syscall)
+        0xbf, 0x00, 0x00, 0x00, 0x00, // mov  rdi, 0 (EXIT_SUCCESS)
         0x0f, 0x05,                   // syscall
     };
     Str code = {0};
@@ -865,24 +870,38 @@ Str build_elf(Str code_) {
 }
 
 Num run_program(Str path) {
-    pid_t pid = fork();
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        fprintf(stderr, "Error pipe\n");
+        exit(1);
+    }
 
-    switch (pid) {
-    case -1: fprintf(stderr, "Error fork\n"); exit(1);
-    case 0: {
-        // Child
+    pid_t pid = fork();
+    if (pid == -1) {
+        fprintf(stderr, "Error fork\n");
+        exit(1);
+    }
+
+    if (pid == 0) { // Child
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
         char *p = str_as_cstr(path);
         execve(p, (char *[]){p, NULL}, (char *[]){NULL});
         fprintf(stderr, "Error execve %s\n", p);
         exit(1);
-    } break;
-    default: {
+    } else {
         // Parent
-        int status;
-        wait(&status);
-        u8 exit_code = WEXITSTATUS(status);
-        return exit_code;
-    } break;
+        close(pipefd[1]);
+        Num res = 0;
+        size_t nb = 0;
+        if ((nb = read(pipefd[0], &res, sizeof(res))) != sizeof(res)) {
+            fprintf(stderr, "Error read: got only %ld bytes\n", nb);
+            exit(1);
+        }
+        close(pipefd[0]);
+        wait(NULL);
+        return res;
     }
 }
 
