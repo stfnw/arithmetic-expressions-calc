@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <elf.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -6,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 /*******************************************************************************
  * Libray **********************************************************************
@@ -38,6 +43,29 @@ typedef struct {
 // Make a proper string from a string literal.
 #define Str(s)                                                                 \
     (Str) { (u8 *)s, lengthof(s) }
+
+char *str_as_cstr(Str s) {
+    char *buf = malloc(s.len + 1);
+    memcpy(buf, s.buf, s.len);
+    buf[s.len] = '\0';
+    return buf;
+}
+
+void hexdump(Str s) {
+    for (u64 i = 0; i < s.len; i += 1) {
+        if (i % 0x10 == 0 && i != 0) {
+            putchar('\n');
+        }
+        if (i % 0x10 == 0) {
+            printf("0x%010lx: ", i);
+        }
+        if (i % 0x08 == 0) {
+            putchar(' ');
+        }
+        printf("%02x ", s.buf[i]);
+    }
+    putchar('\n');
+}
 
 #define LIST_REVERSE(TYPE, head)                                               \
     do {                                                                       \
@@ -677,30 +705,6 @@ void jit_ast_(Ast *ast, Jit *jit) {
     }
 }
 
-bool matches_function_epilogue(u8 *mem) {
-    return mem[0] == 0x5b && mem[1] == 0x5d && mem[2] == 0xc3;
-}
-
-void jit_hexdump_program(Str code) {
-    for (u64 i = 0; i < code.len; i += 1) {
-        if (i % 0x10 == 0 && i != 0) {
-            putchar('\n');
-        }
-        if (i % 0x10 == 0) {
-            printf("0x%010lx: ", i);
-        }
-        if (i % 0x08 == 0) {
-            putchar(' ');
-        }
-        printf("%02x ", code.buf[i]);
-
-        if (i >= 2 && code.len && matches_function_epilogue(code.buf + i - 2)) {
-            break;
-        }
-    }
-    putchar('\n');
-}
-
 #define JIT_MAX_SIZE 0x1000
 // Compile an ast to native x86_64 machine code.
 Str jit_ast(Ast *ast) {
@@ -727,17 +731,16 @@ Str jit_ast(Ast *ast) {
     jit_push(&jit, 1, 0x5d); //             pop rbp
     jit_push(&jit, 1, 0xc3); //             ret
 
-    Str code = {jit.mem, jit.n};
+    Str code = {jit.mem, jit.i};
     return code;
 }
 
 Num mode_jit_ast(Ast *ast) {
-    printf("[+] Running JIT\n");
-
+    printf("[+] Running JIT compiler\n");
     Str code = jit_ast(ast);
 
     printf("    Hexdump of JIT program\n");
-    jit_hexdump_program(code);
+    hexdump(code);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -757,9 +760,150 @@ Num mode_jit_ast(Ast *ast) {
  * and then run it. ************************************************************
  ******************************************************************************/
 
-void mode_compile_ast(Ast *ast) {
-    (void)ast;
-    assert(false && "TODO Unimplemented");
+void write_program_to_file(Str s, Str outpath) {
+    char *p = str_as_cstr(outpath);
+
+    FILE *file = fopen(p, "w");
+    if (file == NULL) {
+        fprintf(stderr, "Error opening file %.*s\n", (int)outpath.len,
+                outpath.buf);
+        exit(1);
+    }
+
+    size_t nb = fwrite(s.buf, 1, s.len, file);
+    if (nb != s.len) {
+        fprintf(stderr, "Error writing file %.*s\n", (int)outpath.len,
+                outpath.buf);
+        exit(1);
+    }
+
+    fclose(file);
+
+    if (chmod(p, S_IRUSR | S_IXUSR | S_IWUSR) == -1) {
+        fprintf(stderr, "Error chmod file %.*s\n", (int)outpath.len,
+                outpath.buf);
+        exit(1);
+    }
+}
+
+// Wrap native x86_64 machine instructions into a runnable ELF file.
+// `code_` is a function with the signature `() -> i64`. The final elf calls
+// this function and returns its return value as exit code.
+// TODO refactor to write i64 to stdout (exit is too narrow).
+// Reference: man 5 elf. Also very helpful: https://formats.kaitai.io/elf/ and
+// https://github.com/kaitai-io/kaitai_struct_visualizer.
+// Compile a minimal hello world program statically with:
+//
+//      nasm -f elf64 hello.asm -o hello.o
+//      ld hello.o -o hello
+//
+// ksv hello elf.ksy
+//
+// AI was also useful.
+Str build_elf(Str code_) {
+    u64 base_addr = 0x400000;
+
+    // Wrap function in `code_` into a call and exit() of the return value.
+    u8 call[] = {
+        // 0xcc,                      // int3 (debug break)
+        0xe8, 0x0a, 0x00, 0x00, 0x00, // call 0x40100f
+        0x48, 0x89, 0xc7,             // mov  rdi, rax
+        0xb8, 0x3c, 0x00, 0x00, 0x00, // mov  eax, 0x3c (exit syscall)
+        0x0f, 0x05,                   // syscall
+    };
+    Str code = {0};
+    code.len = countof(call) + code_.len;
+    code.buf = malloc(code.len);
+    memcpy(code.buf, call, countof(call));
+    memcpy(code.buf + countof(call), code_.buf, code_.len);
+
+    // Then wrap the native code in `code` into an elf.
+
+    Str elf = {0};
+    elf.len = sizeof(Elf64_Ehdr) + sizeof(Elf64_Phdr) + code.len;
+    elf.buf = malloc(elf.len);
+    memset(elf.buf, 0, elf.len);
+
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)elf.buf;
+    ehdr->e_ident[EI_MAG0] = ELFMAG0;
+    ehdr->e_ident[EI_MAG1] = ELFMAG1;
+    ehdr->e_ident[EI_MAG2] = ELFMAG2;
+    ehdr->e_ident[EI_MAG3] = ELFMAG3;
+    ehdr->e_ident[EI_CLASS] = ELFCLASS64;
+    ehdr->e_ident[EI_DATA] = ELFDATA2LSB;
+    ehdr->e_ident[EI_VERSION] = EV_CURRENT;
+    ehdr->e_ident[EI_OSABI] = ELFOSABI_SYSV;
+    ehdr->e_ident[EI_ABIVERSION] = 0;
+    ehdr->e_type = ET_EXEC;
+    ehdr->e_machine = EM_X86_64;
+    ehdr->e_version = EV_CURRENT; // Version for a second time?
+    ehdr->e_entry = base_addr + sizeof(Elf64_Ehdr) + sizeof(Elf64_Phdr);
+    // Program header immediately follows ELF header.
+    ehdr->e_phoff = sizeof(Elf64_Ehdr);
+    ehdr->e_shoff = 0;        // No section headrs.
+    ehdr->e_flags = 0x000000; // Copied from nasm-produced file; idk why.
+    ehdr->e_ehsize = sizeof(Elf64_Ehdr);
+    ehdr->e_phentsize = sizeof(Elf64_Phdr);
+    ehdr->e_phnum = 1;
+    ehdr->e_shentsize = sizeof(Elf64_Shdr);
+    ehdr->e_shnum = 0;
+    ehdr->e_shstrndx = 0;
+
+    Elf64_Phdr *phdr = (Elf64_Phdr *)(elf.buf + sizeof(Elf64_Ehdr));
+    phdr->p_type = PT_LOAD;
+    phdr->p_flags = PF_X | PF_R;
+    phdr->p_offset = 0;
+    phdr->p_vaddr = base_addr;
+    phdr->p_paddr = base_addr;
+    phdr->p_filesz = elf.len;
+    phdr->p_memsz = elf.len;
+    phdr->p_align = 0x1;
+
+    memcpy(elf.buf + ehdr->e_entry - base_addr, code.buf, code.len);
+
+    return elf;
+}
+
+Num run_program(Str path) {
+    pid_t pid = fork();
+
+    switch (pid) {
+    case -1: fprintf(stderr, "Error fork\n"); exit(1);
+    case 0: {
+        // Child
+        char *p = str_as_cstr(path);
+        execve(p, (char *[]){p, NULL}, (char *[]){NULL});
+        fprintf(stderr, "Error execve %s\n", p);
+        exit(1);
+    } break;
+    default: {
+        // Parent
+        int status;
+        wait(&status);
+        u8 exit_code = WEXITSTATUS(status);
+        return exit_code;
+    } break;
+    }
+}
+
+Num mode_compile_ast(Ast *ast, Str outpath) {
+    printf("[+] Running AOT compiler\n");
+    Str code = jit_ast(ast);
+
+    // printf("    Hexdump of x86_64 machine code\n");
+    // hexdump(code);
+
+    Str elf = build_elf(code);
+    munmap(code.buf, code.len);
+    printf("    Hexdump of final ELF file\n");
+    hexdump(elf);
+
+    printf("    Writing ELF to file %.*s\n", (int)outpath.len, outpath.buf);
+    write_program_to_file(elf, outpath);
+
+    Num res = run_program(outpath);
+    printf("    Result: %ld\n", res);
+    return res;
 }
 
 /*******************************************************************************
@@ -905,13 +1049,11 @@ void test() {
         putchar('\n');
         Num res_vm = mode_vm_ast(ast);
         putchar('\n');
-        // Num res_compile = mode_compile_ast(ast);
+        Num res_compile = mode_compile_ast(ast, Str("/tmp/out"));
         putchar('\n');
 
-        assert(res_interpret == res_jit && res_interpret == res_vm);
-        // && res_interpret = res_compile
-
-        // TODO add other missing implementations
+        assert(res_interpret == res_jit && res_interpret == res_vm &&
+               res_interpret == res_compile);
     }
 }
 
@@ -953,7 +1095,9 @@ int main(int argc, char *argv[]) {
         case ModeInterpret: mode_interpret_ast(ast); break;
         case ModeVm: mode_vm_ast(ast); break;
         case ModeJit: mode_jit_ast(ast); break;
-        case ModeCompile: mode_compile_ast(ast); break;
+        case ModeCompile:
+            mode_compile_ast(ast, args.ok.modeopts.compiler_outpath);
+            break;
         default: break;
         }
     } break;
@@ -967,3 +1111,5 @@ int main(int argc, char *argv[]) {
 // TODO switch from malloc to arena allocation
 
 // TODO review code and maybe add comments where necessary.
+
+// TODO update README after new output formats
