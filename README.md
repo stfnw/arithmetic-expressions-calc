@@ -28,9 +28,15 @@ This computes the result for some pre-generated random arithmetic instructions u
 
 # Example runs
 
-## Interpreter 
+## Interpreter
 
-TODO
+```
+$ ./calc interpret "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
+[+] Parsed AST: (+ (+ (+ (+ (* 3 2) (/ (/ 2 10) 19)) (/ (* (/ 3 10) 4) 10)) (* 2 (+ 4 5))) 9)
+
+[+] Interpreting AST
+    Result: 33
+```
 
 ## VM
 
