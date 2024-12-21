@@ -895,6 +895,9 @@ void test() {
         ParseRetRes ast_ = parse(tokens.ok.tokens);
         assert(ast_.is_ok);
         Ast *ast = ast_.ok.ast;
+        printf("[+] Parsed AST: ");
+        print_ast(ast);
+        putchar('\n');
 
         Num res_interpret = mode_interpret_ast(ast);
         putchar('\n');
