@@ -802,10 +802,49 @@ Str build_elf(Str code_) {
 
     // Wrap function in `code_` into a call. Also see
     // https://blog.rchapman.org/posts/Linux_System_Call_Table_for_x86_64/.
+
+    // Example of resulting assembly including wrapping code for return the
+    // result:
+    // $ ./calc compile /tmp/out "4+ 5"
+    // ...
+    // $ gdb /tmp/out
+    // (gdb) starti
+    // Starting program: /tmp/out
+    //
+    // Program stopped.
+    // 0x0000000000400078 in ?? ()
+    // (gdb) disassemble/r $rip, +75
+    // Dump of assembler code from 0x400078 to 0x4000c3:
+    // => 0x0000000000400078:  e8 21 00 00 00          call   0x40009e
+    //    0x000000000040007d:  50                      push   rax
+    //    0x000000000040007e:  b8 01 00 00 00          mov    eax,0x1
+    //    0x0000000000400083:  bf 01 00 00 00          mov    edi,0x1
+    //    0x0000000000400088:  48 89 e6                mov    rsi,rsp
+    //    0x000000000040008b:  ba 08 00 00 00          mov    edx,0x8
+    //    0x0000000000400090:  0f 05                   syscall
+    //    0x0000000000400092:  b8 3c 00 00 00          mov    eax,0x3c
+    //    0x0000000000400097:  bf 00 00 00 00          mov    edi,0x0
+    //    0x000000000040009c:  0f 05                   syscall
+    //    0x000000000040009e:  55                      push   rbp
+    //    0x000000000040009f:  48 89 e5                mov    rbp,rsp
+    //    0x00000000004000a2:  53                      push   rbx
+    //    0x00000000004000a3:  48 b8 04 00 00 00 00 00 00 00   movabs rax,0x4
+    //    0x00000000004000ad:  50                      push   rax
+    //    0x00000000004000ae:  48 b8 05 00 00 00 00 00 00 00   movabs rax,0x5
+    //    0x00000000004000b8:  50                      push   rax
+    //    0x00000000004000b9:  5b                      pop    rbx
+    //    0x00000000004000ba:  58                      pop    rax
+    //    0x00000000004000bb:  48 01 d8                add    rax,rbx
+    //    0x00000000004000be:  50                      push   rax
+    //    0x00000000004000bf:  58                      pop    rax
+    //    0x00000000004000c0:  5b                      pop    rbx
+    //    0x00000000004000c1:  5d                      pop    rbp
+    //    0x00000000004000c2:  c3                      ret
+    // End of assembler dump.
+
     u8 call[] = {
         // 0xcc,                      // int3 (debug break)
-        // TODO comment disassembly from debugger
-        0xe8, 0x21, 0x00, 0x00, 0x00, // call 0x401026
+        0xe8, 0x21, 0x00, 0x00, 0x00, // call 0x40009e
         0x50,                         // push rax
         0xb8, 0x01, 0x00, 0x00, 0x00, // mov  eax, 1 (write syscall)
         0xbf, 0x01, 0x00, 0x00, 0x00, // mov  edi, 1 (fd: stdout)
@@ -920,6 +959,7 @@ Num mode_compile_ast(Ast *ast, Str outpath) {
     printf("    Writing ELF to file %.*s\n", (int)outpath.len, outpath.buf);
     write_program_to_file(elf, outpath);
 
+    printf("    Running file %.*s\n", (int)outpath.len, outpath.buf);
     Num res = run_program(outpath);
     printf("    Result: %ld\n", res);
     return res;
