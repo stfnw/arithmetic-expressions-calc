@@ -51,17 +51,6 @@ typedef struct {
         head = prev;                                                           \
     } while (0)
 
-// TokenList *reverse_list(TokenList *head) {
-//     TokenList *cur = head, *prev = NULL, *next;
-//     while (cur != NULL) {
-//         next = cur->next;
-//         cur->next = prev;
-//         prev = cur;
-//         cur = next;
-//     }
-//     return prev;
-// }
-
 /*******************************************************************************
  * Lexing **********************************************************************
  ******************************************************************************/
@@ -152,13 +141,10 @@ LexRetRes lex(Str s) {
 
     for (u64 i = 0; i < s.len;) {
         if (s.buf[i] == ' ') {
+            // Don't emit any token; simply ignore whitespace.
             while (i < s.len && s.buf[i] == ' ') {
                 i += 1;
             }
-            // Don't emit any token; simply ignore whitespace.
-            // Token *token = malloc(sizeof(*token));
-            // token->type = TokenWhiteSpaceT;
-            // list = append_to_list(list, token);
         }
 
         else if (is_digit(s.buf[i])) {
