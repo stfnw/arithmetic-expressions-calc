@@ -40,7 +40,40 @@ $ ./calc interpret "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 
 ## VM
 
-TODO
+```
+$ ./calc vm "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
+[+] Parsed AST: (+ (+ (+ (+ (* 3 2) (/ (/ 2 10) 19)) (/ (* (/ 3 10) 4) 10)) (* 2 (+ 4 5))) 9)
+
+[+] Running VM
+    VM instruction stream:
+         OpPush 3
+         OpPush 2
+         OpMul
+         OpPush 2
+         OpPush 10
+         OpDiv
+         OpPush 19
+         OpDiv
+         OpAdd
+         OpPush 3
+         OpPush 10
+         OpDiv
+         OpPush 4
+         OpMul
+         OpPush 10
+         OpDiv
+         OpAdd
+         OpPush 2
+         OpPush 4
+         OpPush 5
+         OpAdd
+         OpMul
+         OpAdd
+         OpPush 9
+         OpAdd
+         OpExit
+    Result: 33
+```
 
 ## JIT compiler
 
