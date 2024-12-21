@@ -645,13 +645,13 @@ void jit_stack_push(Jit *jit, Num n) {
 }
 
 // Post-order traversal of the AST.
-void mode_jit_ast_(Ast *ast, Jit *jit) {
+void jit_ast_(Ast *ast, Jit *jit) {
     switch (ast->type) {
     case SymbolNumT: jit_stack_push(jit, ast->as.numval); break;
 
     case SymbolBinopT: {
-        mode_jit_ast_(ast->as.binop.operand1, jit);
-        mode_jit_ast_(ast->as.binop.operand2, jit);
+        jit_ast_(ast->as.binop.operand1, jit);
+        jit_ast_(ast->as.binop.operand2, jit);
         jit_push(jit, 1, 0x5b); // pop rbx
         jit_push(jit, 1, 0x58); // pop rax
         switch (ast->as.binop.type) {
@@ -701,10 +701,11 @@ void jit_hexdump_program(Str code) {
     putchar('\n');
 }
 
-Num mode_jit_ast(Ast *ast) {
-    printf("[+] Running JIT\n");
+#define JIT_MAX_SIZE 0x1000
+// Compile an ast to native x86_64 machine code.
+Str jit_ast(Ast *ast) {
     Jit jit = {0};
-    jit.n = 0x1000;
+    jit.n = JIT_MAX_SIZE;
     jit.i = 0;
     jit.mem = mmap(NULL, jit.n, PROT_READ | PROT_WRITE | PROT_EXEC,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -718,7 +719,7 @@ Num mode_jit_ast(Ast *ast) {
     jit_push(&jit, 3, 0x48, 0x89, 0xe5); // mov  rbp, rsp
     jit_push(&jit, 1, 0x53);             // push rbx (save registers)
 
-    mode_jit_ast_(ast, &jit);
+    jit_ast_(ast, &jit);
     jit_push(&jit, 1, 0x58); // pop rax (final computed result)
 
     // Function epilogue.
@@ -727,6 +728,13 @@ Num mode_jit_ast(Ast *ast) {
     jit_push(&jit, 1, 0xc3); //             ret
 
     Str code = {jit.mem, jit.n};
+    return code;
+}
+
+Num mode_jit_ast(Ast *ast) {
+    printf("[+] Running JIT\n");
+
+    Str code = jit_ast(ast);
 
     printf("    Hexdump of JIT program\n");
     jit_hexdump_program(code);
@@ -954,3 +962,5 @@ int main(int argc, char *argv[]) {
 // __asm__ volatile("int3"); // Debug break.
 
 // TODO switch from malloc to arena allocation
+
+// TODO review code and maybe add comments where necessary.
