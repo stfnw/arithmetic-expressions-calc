@@ -461,144 +461,6 @@ Num mode_interpret_ast(Ast *ast) {
 }
 
 /*******************************************************************************
- * Mode: jit AST and then run the jitted code. *********************************
- * Good reference: https://github.com/spencertipping/jit-tutorial **************
- ******************************************************************************/
-
-typedef struct {
-    u8 *mem; // Code memory.
-    u64 n;   // Size of memory.
-    u64 i;   // Current position.
-} Jit;
-
-typedef Num (*Jitfn)();
-
-// Extend the jits code with given bytes.
-void jit_push(Jit *jit, int n, ...) {
-    va_list bytes;
-    va_start(bytes, n);
-    for (u8 i = 0; i < n; i++) {
-        assert(jit->i < jit->n && "Error: JIT code size exceeded");
-        jit->mem[jit->i++] = (u8)va_arg(bytes, int);
-    }
-    va_end(bytes);
-}
-
-// Push a number to the stack at runtime via rax.
-void jit_stack_push(Jit *jit, Num n) {
-    jit_push(jit, 2, 0x48, 0xb8);                   // mov  rax, n
-    jit_push(jit, 1, (((u64)n) >> (0 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (1 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (2 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (3 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (4 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (5 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (6 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (7 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, 0x50);                         // push rax
-}
-
-// Post-order traversal of the AST.
-void mode_jit_ast_(Ast *ast, Jit *jit) {
-    switch (ast->type) {
-    case SymbolNumT: jit_stack_push(jit, ast->as.numval); break;
-
-    case SymbolBinopT: {
-        mode_jit_ast_(ast->as.binop.operand1, jit);
-        mode_jit_ast_(ast->as.binop.operand2, jit);
-        jit_push(jit, 1, 0x5b); // pop rbx
-        jit_push(jit, 1, 0x58); // pop rax
-        switch (ast->as.binop.type) {
-        case SymbolBinopPlusT:
-            jit_push(jit, 3, 0x48, 0x01, 0xd8); // add  rax, rbx
-            break;
-        case SymbolBinopMinusT:
-            jit_push(jit, 3, 0x48, 0x29, 0xd8); // sub  rax, rbx
-            break;
-        case SymbolBinopMultT:
-            jit_push(jit, 3, 0x48, 0xf7, 0xeb); // imul rbx
-            break;
-        case SymbolBinopDivT:
-            jit_push(jit, 5, 0x48, 0x99, 0x48, 0xf7,
-                     0xfb); // cqo (sign extend); idiv rbx
-            break;
-        default: assert(false && "Invalid binop type");
-        }
-        jit_push(jit, 1, 0x50); // push rax
-    } break;
-
-    default: assert(false && "Invalid symbol type");
-    }
-}
-
-bool matches_function_epilogue(u8 *mem) {
-    return mem[0] == 0x5b && mem[1] == 0x5d && mem[2] == 0xc3;
-}
-
-void jit_hexdump_program(Str code) {
-    for (u64 i = 0; i < code.len; i += 1) {
-        if (i % 0x10 == 0 && i != 0) {
-            putchar('\n');
-        }
-        if (i % 0x10 == 0) {
-            printf("0x%010lx: ", i);
-        }
-        if (i % 0x08 == 0) {
-            putchar(' ');
-        }
-        printf("%02x ", code.buf[i]);
-
-        if (i >= 2 && code.len && matches_function_epilogue(code.buf + i - 2)) {
-            break;
-        }
-    }
-    putchar('\n');
-}
-
-Num mode_jit_ast(Ast *ast) {
-    printf("[+] Running JIT\n");
-    Jit jit = {0};
-    jit.n = 0x1000;
-    jit.i = 0;
-    jit.mem = mmap(NULL, jit.n, PROT_READ | PROT_WRITE | PROT_EXEC,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (jit.mem == MAP_FAILED) {
-        printf("mmap: Failed to allocate memory");
-        exit(1);
-    }
-
-    // Function prologue.
-    jit_push(&jit, 1, 0x55);             // push rbp
-    jit_push(&jit, 3, 0x48, 0x89, 0xe5); // mov  rbp, rsp
-    jit_push(&jit, 1, 0x53);             // push rbx (save registers)
-
-    mode_jit_ast_(ast, &jit);
-    jit_push(&jit, 1, 0x58); // pop rax (final computed result)
-
-    // Function epilogue.
-    jit_push(&jit, 1, 0x5b); //             pop rbx
-    jit_push(&jit, 1, 0x5d); //             pop rbp
-    jit_push(&jit, 1, 0xc3); //             ret
-
-    Str code = {jit.mem, jit.n};
-
-    printf("    Hexdump of JIT program\n");
-    jit_hexdump_program(code);
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpedantic"
-    Jitfn fn = (Jitfn)code.buf;
-#pragma GCC diagnostic pop
-    // __asm__ volatile("int3"); // Debug break.
-    Num res = fn();
-
-    munmap(code.buf, code.len);
-
-    printf("    Result: %ld\n", res);
-    return res;
-}
-
-/*******************************************************************************
  * Mode: compile AST to custom byte code and then run (interpret) the bytecode *
  * in a custom VM. *************************************************************
  * Good *reference: https://www.jmeiners.com/lc3-vm/ ***************************
@@ -745,7 +607,146 @@ Num mode_vm_ast(Ast *ast) {
 }
 
 /*******************************************************************************
- * Mode: compile the AST into a native ELF and write it out to the file system *
+ * Mode: jit AST and then run the jitted code. *********************************
+ * Good reference: https://github.com/spencertipping/jit-tutorial **************
+ ******************************************************************************/
+
+typedef struct {
+    u8 *mem; // Code memory.
+    u64 n;   // Size of memory.
+    u64 i;   // Current position.
+} Jit;
+
+typedef Num (*Jitfn)();
+
+// Extend the jits code with given bytes.
+void jit_push(Jit *jit, int n, ...) {
+    va_list bytes;
+    va_start(bytes, n);
+    for (u8 i = 0; i < n; i++) {
+        assert(jit->i < jit->n && "Error: JIT code size exceeded");
+        jit->mem[jit->i++] = (u8)va_arg(bytes, int);
+    }
+    va_end(bytes);
+}
+
+// Push a number to the stack at runtime via rax.
+void jit_stack_push(Jit *jit, Num n) {
+    jit_push(jit, 2, 0x48, 0xb8);                   // mov  rax, n
+    jit_push(jit, 1, (((u64)n) >> (0 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (1 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (2 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (3 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (4 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (5 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (6 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (7 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, 0x50);                         // push rax
+}
+
+// Post-order traversal of the AST.
+void mode_jit_ast_(Ast *ast, Jit *jit) {
+    switch (ast->type) {
+    case SymbolNumT: jit_stack_push(jit, ast->as.numval); break;
+
+    case SymbolBinopT: {
+        mode_jit_ast_(ast->as.binop.operand1, jit);
+        mode_jit_ast_(ast->as.binop.operand2, jit);
+        jit_push(jit, 1, 0x5b); // pop rbx
+        jit_push(jit, 1, 0x58); // pop rax
+        switch (ast->as.binop.type) {
+        case SymbolBinopPlusT:
+            jit_push(jit, 3, 0x48, 0x01, 0xd8); // add  rax, rbx
+            break;
+        case SymbolBinopMinusT:
+            jit_push(jit, 3, 0x48, 0x29, 0xd8); // sub  rax, rbx
+            break;
+        case SymbolBinopMultT:
+            jit_push(jit, 3, 0x48, 0xf7, 0xeb); // imul rbx
+            break;
+        case SymbolBinopDivT:
+            jit_push(jit, 5, 0x48, 0x99, 0x48, 0xf7,
+                     0xfb); // cqo (sign extend); idiv rbx
+            break;
+        default: assert(false && "Invalid binop type");
+        }
+        jit_push(jit, 1, 0x50); // push rax
+    } break;
+
+    default: assert(false && "Invalid symbol type");
+    }
+}
+
+bool matches_function_epilogue(u8 *mem) {
+    return mem[0] == 0x5b && mem[1] == 0x5d && mem[2] == 0xc3;
+}
+
+void jit_hexdump_program(Str code) {
+    for (u64 i = 0; i < code.len; i += 1) {
+        if (i % 0x10 == 0 && i != 0) {
+            putchar('\n');
+        }
+        if (i % 0x10 == 0) {
+            printf("0x%010lx: ", i);
+        }
+        if (i % 0x08 == 0) {
+            putchar(' ');
+        }
+        printf("%02x ", code.buf[i]);
+
+        if (i >= 2 && code.len && matches_function_epilogue(code.buf + i - 2)) {
+            break;
+        }
+    }
+    putchar('\n');
+}
+
+Num mode_jit_ast(Ast *ast) {
+    printf("[+] Running JIT\n");
+    Jit jit = {0};
+    jit.n = 0x1000;
+    jit.i = 0;
+    jit.mem = mmap(NULL, jit.n, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (jit.mem == MAP_FAILED) {
+        printf("mmap: Failed to allocate memory");
+        exit(1);
+    }
+
+    // Function prologue.
+    jit_push(&jit, 1, 0x55);             // push rbp
+    jit_push(&jit, 3, 0x48, 0x89, 0xe5); // mov  rbp, rsp
+    jit_push(&jit, 1, 0x53);             // push rbx (save registers)
+
+    mode_jit_ast_(ast, &jit);
+    jit_push(&jit, 1, 0x58); // pop rax (final computed result)
+
+    // Function epilogue.
+    jit_push(&jit, 1, 0x5b); //             pop rbx
+    jit_push(&jit, 1, 0x5d); //             pop rbp
+    jit_push(&jit, 1, 0xc3); //             ret
+
+    Str code = {jit.mem, jit.n};
+
+    printf("    Hexdump of JIT program\n");
+    jit_hexdump_program(code);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+    Jitfn fn = (Jitfn)code.buf;
+#pragma GCC diagnostic pop
+    // __asm__ volatile("int3"); // Debug break.
+    Num res = fn();
+
+    munmap(code.buf, code.len);
+
+    printf("    Result: %ld\n", res);
+    return res;
+}
+
+/*******************************************************************************
+ * Mode: compile the AST into a native ELF, write it out to the file system, ***
+ * and then run it. ************************************************************
  ******************************************************************************/
 
 void mode_compile_ast(Ast *ast) {
