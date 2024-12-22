@@ -631,7 +631,7 @@ static Num mode_interpret_ast(Ast *ast) {
 /*******************************************************************************
  * Mode: compile AST to custom byte code and then run (interpret) the bytecode *
  * in a custom VM. *************************************************************
- * Good *reference: https://www.jmeiners.com/lc3-vm/ ***************************
+ * Good reference: https://www.jmeiners.com/lc3-vm/ ****************************
  ******************************************************************************/
 
 typedef enum {
