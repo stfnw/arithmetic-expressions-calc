@@ -139,3 +139,27 @@ $ ./calc compile /tmp/out "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9
     Running file /tmp/out
     Result: 33
 ```
+
+# A note on memory handling
+
+I learned of arena allocation during this project, which came in very handy.
+Valgrind output on `48c03fc`:
+
+
+```
+$ valgrind ./calc test > /dev/null
+==205044== Memcheck, a memory error detector
+==205044== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==205044== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==205044== Command: ./calc test
+==205044==
+==205044==
+==205044== HEAP SUMMARY:
+==205044==     in use at exit: 0 bytes in 0 blocks
+==205044==   total heap usage: 43 allocs, 43 frees, 100,024 bytes allocated
+==205044==
+==205044== All heap blocks were freed -- no leaks are possible
+==205044==
+==205044== For lists of detected and suppressed errors, rerun with: -s
+==205044== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+```
