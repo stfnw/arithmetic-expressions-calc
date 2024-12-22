@@ -127,7 +127,7 @@ void print_token_list(TokenList *tokens) {
     }
 }
 
-TokenList *append_to_list(TokenList *head, Token *token) {
+TokenList *prepend_to_token_list(TokenList *head, Token *token) {
     TokenList *new_head = malloc(sizeof(TokenList));
     new_head->token = token;
     new_head->next = head;
@@ -140,6 +140,7 @@ typedef enum {
     LexErrUnexpectedChar = 0x0101,
 } LexErrType;
 
+// Emulate "Option<T>".
 typedef struct {
     bool is_ok;
     union {
@@ -161,6 +162,7 @@ void print_lex_error(struct LexErr err) {
             err.type, err.byte_pos, err.chr);
 }
 
+// Tokenize a string.
 LexRetRes lex(Str s) {
     TokenList *list = NULL;
 
@@ -181,14 +183,14 @@ LexRetRes lex(Str s) {
                 token->as.numval += s.buf[i] - '0';
                 i += 1;
             }
-            list = append_to_list(list, token);
+            list = prepend_to_token_list(list, token);
         }
 
         else if (s.buf[i] == '+') {
             Token *token = malloc(sizeof(*token));
             token->type = TokenPlusT;
             token->as.numval = 0;
-            list = append_to_list(list, token);
+            list = prepend_to_token_list(list, token);
             i += 1;
         }
 
@@ -196,7 +198,7 @@ LexRetRes lex(Str s) {
             Token *token = malloc(sizeof(*token));
             token->type = TokenMinusT;
             token->as.numval = 0;
-            list = append_to_list(list, token);
+            list = prepend_to_token_list(list, token);
             i += 1;
         }
 
@@ -204,7 +206,7 @@ LexRetRes lex(Str s) {
             Token *token = malloc(sizeof(*token));
             token->type = TokenMultT;
             token->as.numval = 0;
-            list = append_to_list(list, token);
+            list = prepend_to_token_list(list, token);
             i += 1;
         }
 
@@ -212,7 +214,7 @@ LexRetRes lex(Str s) {
             Token *token = malloc(sizeof(*token));
             token->type = TokenDivT;
             token->as.numval = 0;
-            list = append_to_list(list, token);
+            list = prepend_to_token_list(list, token);
             i += 1;
         }
 
@@ -220,7 +222,7 @@ LexRetRes lex(Str s) {
             Token *token = malloc(sizeof(*token));
             token->type = TokenLParenT;
             token->as.numval = 0;
-            list = append_to_list(list, token);
+            list = prepend_to_token_list(list, token);
             i += 1;
         }
 
@@ -228,7 +230,7 @@ LexRetRes lex(Str s) {
             Token *token = malloc(sizeof(*token));
             token->type = TokenRParenT;
             token->as.numval = 0;
-            list = append_to_list(list, token);
+            list = prepend_to_token_list(list, token);
             i += 1;
         }
 
@@ -276,7 +278,7 @@ struct Ast {
     } as;
 };
 
-// Print AST as s-expression.
+// Pre-order traversal of the AST.
 void print_ast_(Ast *ast) {
     switch (ast->type) {
     case SymbolNumT: printf("%ld", ast->as.numval); break;
@@ -288,7 +290,7 @@ void print_ast_(Ast *ast) {
         case SymbolBinopMinusT: putchar('-'); break;
         case SymbolBinopMultT: putchar('*'); break;
         case SymbolBinopDivT: putchar('/'); break;
-        default: assert(false && "Invalid binop type");
+        default: assert(false && "Invalid binary operation type");
         }
         putchar(' ');
         print_ast_(ast->as.binop.operand1);
@@ -301,6 +303,7 @@ void print_ast_(Ast *ast) {
     }
 }
 
+// Print AST as s-expression.
 void print_ast(Ast *ast) {
     print_ast_(ast);
     putchar('\n');
@@ -319,6 +322,7 @@ typedef enum {
     ParseErrUnexpectedEOF = 0x0205,
 } ParseErrType;
 
+// Emulate "Result<T>".
 typedef struct {
     bool is_ok;
     union {
@@ -333,6 +337,7 @@ void print_parse_error(ParseErrType err) {
 
 ParseRetRes parse_expr(TokenList *tokens);
 
+// Parse number / unary minus / parenthesis groupings.
 ParseRetRes parse_factor(TokenList *tokens) {
     if (tokens == NULL) {
         return (ParseRetRes){false, .err = ParseErrUnexpectedEOF};
@@ -379,6 +384,7 @@ ParseRetRes parse_factor(TokenList *tokens) {
     }
 }
 
+// Parse multiplications / divisions.
 ParseRetRes parse_term(TokenList *tokens) {
     ParseRetRes op1 = parse_factor(tokens);
     if (!op1.is_ok) {
@@ -412,6 +418,7 @@ ParseRetRes parse_term(TokenList *tokens) {
     return (ParseRetRes){true, .ok = {.rest = tokens, .ast = res}};
 }
 
+// Parse additions / subtractions.
 ParseRetRes parse_expr(TokenList *tokens) {
     ParseRetRes op1 = parse_term(tokens);
     if (!op1.is_ok) {
@@ -445,6 +452,7 @@ ParseRetRes parse_expr(TokenList *tokens) {
     return (ParseRetRes){true, .ok = {.rest = tokens, .ast = res}};
 }
 
+// Parse a list of tokens.
 ParseRetRes parse(TokenList *tokens) {
     ParseRetRes res = parse_expr(tokens);
     if (res.is_ok && res.ok.rest != NULL) {
@@ -470,7 +478,7 @@ Num interpret_ast_(Ast *ast) {
         case SymbolBinopMinusT: return op1 - op2; break;
         case SymbolBinopMultT: return op1 * op2; break;
         case SymbolBinopDivT: return op1 / op2; break;
-        default: assert(false && "Invalid binop type");
+        default: assert(false && "Invalid binary operation type");
         }
     } break;
 
@@ -552,7 +560,7 @@ void vm_bytecode_compile_ast_(VM *vm, Ast *ast) {
         case SymbolBinopMinusT: vm->mem[vm->ip++] = OpSub; break;
         case SymbolBinopMultT: vm->mem[vm->ip++] = OpMul; break;
         case SymbolBinopDivT: vm->mem[vm->ip++] = OpDiv; break;
-        default: assert(false && "Invalid binop type");
+        default: assert(false && "Invalid binary operation type");
         }
     } break;
 
@@ -562,14 +570,17 @@ void vm_bytecode_compile_ast_(VM *vm, Ast *ast) {
 
 void vm_bytecode_compile_ast(VM *vm, Ast *ast) {
     vm_bytecode_compile_ast_(vm, ast);
+    // Prevent execution of garbage after the actual code.
     vm->mem[vm->ip++] = OpExit;
-    vm->ip = 0;
+    vm->ip = 0; // Reset instruction pointer back to entry-point.
 }
 
 Num vm_run(VM *vm) {
     while (vm->ip < VM_MEM_SIZE - VM_STACK_SIZE) {
+        // "Fetch".
         u8 opcode = vm->mem[vm->ip];
         vm->ip += 1;
+        // "Decode" and "Execute".
         switch (opcode) {
         case OpAdd:
         case OpSub:
@@ -639,12 +650,12 @@ Num mode_vm_ast(Ast *ast) {
 typedef struct {
     u8 *mem; // Code memory.
     u64 n;   // Size of memory.
-    u64 i;   // Current position.
+    u64 i;   // Current position (only needed during jitting of the code).
 } Jit;
 
 typedef Num (*Jitfn)();
 
-// Extend the jits code with given bytes.
+// Extend the jit's code with given bytes.
 void jit_push(Jit *jit, int n, ...) {
     va_list bytes;
     va_start(bytes, n);
@@ -658,14 +669,14 @@ void jit_push(Jit *jit, int n, ...) {
 // Push a number to the stack at runtime via rax.
 void jit_stack_push(Jit *jit, Num n) {
     jit_push(jit, 2, 0x48, 0xb8);                   // mov  rax, n
-    jit_push(jit, 1, (((u64)n) >> (0 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (1 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (2 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (3 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (4 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (5 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (6 * 8)) & 0xff); // n in little endian
-    jit_push(jit, 1, (((u64)n) >> (7 * 8)) & 0xff); // n in little endian
+    jit_push(jit, 1, (((u64)n) >> (0 * 8)) & 0xff); //     n in little endian
+    jit_push(jit, 1, (((u64)n) >> (1 * 8)) & 0xff); //     n in little endian
+    jit_push(jit, 1, (((u64)n) >> (2 * 8)) & 0xff); //     n in little endian
+    jit_push(jit, 1, (((u64)n) >> (3 * 8)) & 0xff); //     n in little endian
+    jit_push(jit, 1, (((u64)n) >> (4 * 8)) & 0xff); //     n in little endian
+    jit_push(jit, 1, (((u64)n) >> (5 * 8)) & 0xff); //     n in little endian
+    jit_push(jit, 1, (((u64)n) >> (6 * 8)) & 0xff); //     n in little endian
+    jit_push(jit, 1, (((u64)n) >> (7 * 8)) & 0xff); //     n in little endian
     jit_push(jit, 1, 0x50);                         // push rax
 }
 
@@ -693,7 +704,7 @@ void jit_ast_(Ast *ast, Jit *jit) {
             jit_push(jit, 5, 0x48, 0x99, 0x48, 0xf7,
                      0xfb); // cqo (sign extend); idiv rbx
             break;
-        default: assert(false && "Invalid binop type");
+        default: assert(false && "Invalid binary operation type");
         }
         jit_push(jit, 1, 0x50); // push rax
     } break;
@@ -703,7 +714,7 @@ void jit_ast_(Ast *ast, Jit *jit) {
 }
 
 #define JIT_MAX_SIZE 0x1000
-// Compile an ast to native x86_64 machine code.
+// Compile an AST to native x86_64 machine code.
 Str jit_ast(Ast *ast) {
     Jit jit = {0};
     jit.n = JIT_MAX_SIZE;
@@ -711,17 +722,17 @@ Str jit_ast(Ast *ast) {
     jit.mem = mmap(NULL, jit.n, PROT_READ | PROT_WRITE | PROT_EXEC,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (jit.mem == MAP_FAILED) {
-        printf("mmap: Failed to allocate memory");
+        fprintf(stderr, "Error mmap: Failed to allocate memory");
         exit(1);
     }
 
     // Function prologue.
     jit_push(&jit, 1, 0x55);             // push rbp
     jit_push(&jit, 3, 0x48, 0x89, 0xe5); // mov  rbp, rsp
-    jit_push(&jit, 1, 0x53);             // push rbx (save registers)
+    jit_push(&jit, 1, 0x53);             // push rbx (save modified registers)
 
     jit_ast_(ast, &jit);
-    jit_push(&jit, 1, 0x58); // pop rax (final computed result)
+    jit_push(&jit, 1, 0x58); //             pop rax (final computed result)
 
     // Function epilogue.
     jit_push(&jit, 1, 0x5b); //             pop rbx
@@ -762,14 +773,14 @@ void write_program_to_file(Str s, Str outpath) {
 
     FILE *file = fopen(p, "w");
     if (file == NULL) {
-        fprintf(stderr, "Error opening file %.*s\n", (int)outpath.len,
+        fprintf(stderr, "Error fopen: file %.*s\n", (int)outpath.len,
                 outpath.buf);
         exit(1);
     }
 
     size_t nb = fwrite(s.buf, 1, s.len, file);
     if (nb != s.len) {
-        fprintf(stderr, "Error writing file %.*s\n", (int)outpath.len,
+        fprintf(stderr, "Error fwrite: file %.*s\n", (int)outpath.len,
                 outpath.buf);
         exit(1);
     }
@@ -777,7 +788,7 @@ void write_program_to_file(Str s, Str outpath) {
     fclose(file);
 
     if (chmod(p, S_IRUSR | S_IXUSR | S_IWUSR) == -1) {
-        fprintf(stderr, "Error chmod file %.*s\n", (int)outpath.len,
+        fprintf(stderr, "Error chmod: file %.*s\n", (int)outpath.len,
                 outpath.buf);
         exit(1);
     }
@@ -884,8 +895,8 @@ Str build_elf(Str code_) {
     ehdr->e_entry = base_addr + sizeof(Elf64_Ehdr) + sizeof(Elf64_Phdr);
     // Program header immediately follows ELF header.
     ehdr->e_phoff = sizeof(Elf64_Ehdr);
-    ehdr->e_shoff = 0;        // No section headrs.
-    ehdr->e_flags = 0x000000; // Copied from nasm-produced file; idk why.
+    ehdr->e_shoff = 0;        // No section headers.
+    ehdr->e_flags = 0x000000; // Copied from nasm-produced file; idk why 0.
     ehdr->e_ehsize = sizeof(Elf64_Ehdr);
     ehdr->e_phentsize = sizeof(Elf64_Phdr);
     ehdr->e_phnum = 1;
@@ -908,6 +919,8 @@ Str build_elf(Str code_) {
     return elf;
 }
 
+// Run the compiled program and read the resulting 8 bytes (i64) from its
+// stdout.
 Num run_program(Str path) {
     int pipefd[2];
     if (pipe(pipefd) == -1) {
@@ -973,7 +986,7 @@ typedef struct {
     bool is_ok;
     union {
         struct {
-            Str input;
+            Str input; // Expression to calculate.
             enum {
                 ModeTest,
                 ModeInterpret,
@@ -982,21 +995,19 @@ typedef struct {
                 ModeCompile,
             } mode;
             union {
-                Str compiler_outpath;
+                Str compiler_outpath; // Only needed for ModeCompile.
             } modeopts;
         } ok;
     };
 } CliArgs;
 
-void usage() { printf("See README.\n"); }
+void usage() { printf("See README for usage information.\n"); }
 
 CliArgs parse_cli_args(int argc, char *argv[]) {
-    if (argc >= 2) {
-        for (int i = 1; i < argc; i += 1) {
-            if (!strcmp(argv[i], "--help")) {
-                usage();
-                exit(0);
-            }
+    for (int i = 1; i < argc; i += 1) {
+        if (!strcmp(argv[i], "--help")) {
+            usage();
+            exit(0);
         }
     }
 
@@ -1112,7 +1123,12 @@ void test() {
         putchar('\n');
 
         assert(res_interpret == res_jit && res_interpret == res_vm &&
-               res_interpret == res_compile);
+               res_interpret == res_compile &&
+               "Different implementations do not agree with each other on the "
+               "resulting value of the evaluated expression");
+
+        putchar('\n');
+        putchar('\n');
     }
 }
 
@@ -1169,6 +1185,6 @@ int main(int argc, char *argv[]) {
 
 // TODO switch from malloc to arena allocation
 
-// TODO review code and maybe add comments where necessary.
-
 // TODO update README after new output formats
+
+// TODO check for out-of-bounds reads/writes
