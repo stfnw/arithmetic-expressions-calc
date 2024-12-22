@@ -305,6 +305,9 @@ void print_ast_(Ast *ast) {
 
 // Print AST as s-expression.
 void print_ast(Ast *ast) {
+    if (ast == NULL) {
+        return;
+    }
     print_ast_(ast);
     putchar('\n');
 }
@@ -340,6 +343,8 @@ ParseRetRes parse_expr(TokenList *tokens);
 // Parse number / unary minus / parenthesis groupings.
 ParseRetRes parse_factor(TokenList *tokens) {
     if (tokens == NULL) {
+        // Note that this makes sure that `parse` never simultaneously returns
+        // `is_ok` and a NULL-pointer for the AST.
         return (ParseRetRes){false, .err = ParseErrUnexpectedEOF};
     }
 
@@ -354,7 +359,7 @@ ParseRetRes parse_factor(TokenList *tokens) {
             tokens = tokens->next;
         }
 
-        if (tokens->token->type != TokenNumT) {
+        if (tokens == NULL || tokens->token->type != TokenNumT) {
             return (ParseRetRes){false, .err = ParseErrNoNumAfterUnaryMinus};
         }
 
@@ -371,7 +376,7 @@ ParseRetRes parse_factor(TokenList *tokens) {
         }
         tokens = r.ok.rest;
 
-        if (tokens->token->type != TokenRParenT) {
+        if (tokens == NULL || tokens->token->type != TokenRParenT) {
             return (ParseRetRes){false, .err = ParseErrUnbalancedParanthesis};
         }
         tokens = tokens->next;
@@ -455,6 +460,9 @@ ParseRetRes parse_expr(TokenList *tokens) {
 // Parse a list of tokens.
 ParseRetRes parse(TokenList *tokens) {
     ParseRetRes res = parse_expr(tokens);
+    assert(!(res.is_ok && res.ok.ast == NULL) &&
+           "Error parsing: `parse` should never return is_ok and a NULL "
+           "pointer for the AST");
     if (res.is_ok && res.ok.rest != NULL) {
         return (ParseRetRes){false, .err = ParseErrUnconsumedInput};
     }
@@ -1186,5 +1194,3 @@ int main(int argc, char *argv[]) {
 // TODO switch from malloc to arena allocation
 
 // TODO update README after new output formats
-
-// TODO check for out-of-bounds reads/writes
