@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <elf.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,10 +11,10 @@
 #include <unistd.h>
 
 /*******************************************************************************
- * Libray **********************************************************************
+ * Type aliases. ***************************************************************
  ******************************************************************************/
 
-// Some parts taken from https://nullprogram.com/blog/2023/10/08/.
+// Mainly taken from https://nullprogram.com/blog/2023/10/08/.
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -29,6 +30,128 @@ typedef uint8_t bool;
 #define true 1
 #define false 0
 
+/*******************************************************************************
+ * Arena allocation definitions. ***********************************************
+ *******************************************************************************/
+
+// Simple linear / arena / region allocator that directly uses syscalls to ask
+// the operating system for memory. Adapted from
+// https://github.com/tiagovcosta/aquaengine/blob/master/AquaEngine/Core/Allocators/Allocator.cpp
+// (MIT License) with corresponding blog post at
+// https://www.gamedev.net/articles/programming/general-and-gameplay-programming/c-custom-memory-allocation-r3010/,
+// and https://nullprogram.com/blog/2023/09/27/.
+// Supports aligned allocations.
+
+typedef struct {
+    u8 *beg;
+    u8 *end;
+} Arena;
+
+static Arena arena_create(size_t size) {
+    Arena arena = {0};
+    // Allocate memory with over-committing (simply reserve a block of
+    // continuous virtual addresses without immediately using all of them).
+    arena.beg = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (arena.beg == MAP_FAILED) {
+        // Out-of-memory strategy is to simply exit.
+        fprintf(stderr,
+                "arena_init: Can't allocate backing memory of 0x%lx bytes\n",
+                size);
+        exit(1);
+    }
+
+    arena.end = arena.beg + size;
+    return arena;
+}
+
+// Can only be called on top-level arena that was allocated through mmap.
+static void arena_destroy(Arena *arena) {
+    if (munmap(arena->beg, arena->end - arena->beg) == -1) {
+        fprintf(stderr, "munmap: Failed\n");
+        exit(1);
+    }
+    arena->beg = NULL;
+    arena->end = NULL;
+}
+
+static inline uintptr_t align(uintptr_t n, u8 alignment_) {
+    uintptr_t alignment = alignment_;
+    return (n + (alignment - 1)) & (~(alignment - 1));
+}
+
+static void *arena_alloc_with_alignment(Arena *arena, size_t size,
+                                        u8 alignment) {
+    assert(size != 0 && "arena_alloc: Invalid size 0");
+    assert((alignment & (alignment - 1)) == 0 &&
+           "arena_alloc: Alignment is not a power of two");
+
+    ptrdiff_t diff = (~((uintptr_t)arena->beg) + 1) & (alignment - 1);
+    if (arena->beg + diff > arena->end) {
+        // Out-of-memory strategy is to simply exit.
+        fprintf(stderr,
+                "arena_alloc: Arena is full; beg: 0x%016lx, requested bytes: "
+                "0x%lx, end: 0x%016lx\n",
+                (uintptr_t)arena->beg, size, (uintptr_t)arena->end);
+        exit(1);
+    }
+
+    void *aligned = arena->beg + diff;
+    arena->beg += diff + size;
+    return memset(aligned, 0, size);
+}
+
+// By default: align to native word size of the platform.
+static void *arena_alloc(Arena *arena, size_t size) {
+    return arena_alloc_with_alignment(arena, size, sizeof(void *));
+}
+
+// static void print_arena(Arena *arena) {
+//     printf("Arena { .beg = 0x%016lx, .end = 0x%016lx }\n",
+//            (uintptr_t)arena->beg, (uintptr_t)arena->end);
+// }
+
+// Check if two arenas refer to the same memory.
+// This is done by checking if they overlap.
+static bool arena_eq(Arena *a1, Arena *a2) {
+    return a1->beg < a2->end && a2->beg < a1->end;
+}
+
+// To prevent aliasing of scratch arenas and persistent arenas in nested
+// function calls. Idea taken from the excellent article
+// https://www.rfleury.com/p/untangling-lifetimes-the-arena-allocator#%C2%A7per-thread-scratch-arenas.
+typedef struct {
+    Arena *arena;
+    Arena orig;
+} ArenaTemp;
+
+static Arena arena_scratch1 = {0}, arena_scratch2 = {0};
+
+// Here we assume that throughout the program each function takes at most one
+// arena parameter, so we only have to consider a single potential conflict
+// arena that should be checked for arena aliasing.
+static ArenaTemp arena_get_scratch(Arena *conflicts) {
+    if (conflicts == NULL || arena_eq(conflicts, &arena_scratch2)) {
+        return (ArenaTemp){&arena_scratch1, arena_scratch1};
+    } else {
+        return (ArenaTemp){&arena_scratch2, arena_scratch2};
+    }
+}
+
+static void arena_release_scratch(ArenaTemp scratch) {
+    if (arena_eq(scratch.arena, &arena_scratch1)) {
+        arena_scratch1 = scratch.orig;
+    } else {
+        assert(arena_eq(scratch.arena, &arena_scratch2));
+        arena_scratch2 = scratch.orig;
+    }
+}
+
+/*******************************************************************************
+ * Better strings (fat pointers). **********************************************
+ * Mainly taken from https://nullprogram.com/blog/2023/10/08/. *****************
+ *******************************************************************************/
+
 typedef struct {
     u8 *buf;
     size_t len;
@@ -41,12 +164,16 @@ typedef struct {
 #define Str(s)                                                                 \
     (Str) { (u8 *)s, lengthof(s) }
 
-char *str_as_cstr(Str s) {
-    char *buf = malloc(s.len + 1);
+char *str_as_cstr(Arena *a, Str s) {
+    char *buf = arena_alloc(a, s.len + 1);
     memcpy(buf, s.buf, s.len);
     buf[s.len] = '\0';
     return buf;
 }
+
+/*******************************************************************************
+ * Other generic helper functions. *********************************************
+ *******************************************************************************/
 
 void hexdump(Str s) {
     for (u64 i = 0; i < s.len; i += 1) {
@@ -127,8 +254,8 @@ void print_token_list(TokenList *tokens) {
     }
 }
 
-TokenList *prepend_to_token_list(TokenList *head, Token *token) {
-    TokenList *new_head = malloc(sizeof(TokenList));
+TokenList *prepend_to_token_list(Arena *a, TokenList *head, Token *token) {
+    TokenList *new_head = arena_alloc(a, sizeof(TokenList));
     new_head->token = token;
     new_head->next = head;
     return new_head;
@@ -163,7 +290,7 @@ void print_lex_error(struct LexErr err) {
 }
 
 // Tokenize a string.
-LexRetRes lex(Str s) {
+LexRetRes lex(Arena *a, Str s) {
     TokenList *list = NULL;
 
     for (u64 i = 0; i < s.len;) {
@@ -175,7 +302,7 @@ LexRetRes lex(Str s) {
         }
 
         else if (is_digit(s.buf[i])) {
-            Token *token = malloc(sizeof(*token));
+            Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenNumT;
             token->as.numval = 0;
             while (is_digit(s.buf[i])) {
@@ -183,54 +310,54 @@ LexRetRes lex(Str s) {
                 token->as.numval += s.buf[i] - '0';
                 i += 1;
             }
-            list = prepend_to_token_list(list, token);
+            list = prepend_to_token_list(a, list, token);
         }
 
         else if (s.buf[i] == '+') {
-            Token *token = malloc(sizeof(*token));
+            Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenPlusT;
             token->as.numval = 0;
-            list = prepend_to_token_list(list, token);
+            list = prepend_to_token_list(a, list, token);
             i += 1;
         }
 
         else if (s.buf[i] == '-') {
-            Token *token = malloc(sizeof(*token));
+            Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenMinusT;
             token->as.numval = 0;
-            list = prepend_to_token_list(list, token);
+            list = prepend_to_token_list(a, list, token);
             i += 1;
         }
 
         else if (s.buf[i] == '*') {
-            Token *token = malloc(sizeof(*token));
+            Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenMultT;
             token->as.numval = 0;
-            list = prepend_to_token_list(list, token);
+            list = prepend_to_token_list(a, list, token);
             i += 1;
         }
 
         else if (s.buf[i] == '/') {
-            Token *token = malloc(sizeof(*token));
+            Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenDivT;
             token->as.numval = 0;
-            list = prepend_to_token_list(list, token);
+            list = prepend_to_token_list(a, list, token);
             i += 1;
         }
 
         else if (s.buf[i] == '(') {
-            Token *token = malloc(sizeof(*token));
+            Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenLParenT;
             token->as.numval = 0;
-            list = prepend_to_token_list(list, token);
+            list = prepend_to_token_list(a, list, token);
             i += 1;
         }
 
         else if (s.buf[i] == ')') {
-            Token *token = malloc(sizeof(*token));
+            Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenRParenT;
             token->as.numval = 0;
-            list = prepend_to_token_list(list, token);
+            list = prepend_to_token_list(a, list, token);
             i += 1;
         }
 
@@ -338,10 +465,10 @@ void print_parse_error(ParseErrType err) {
     fprintf(stderr, "Error parsing: error type 0x%04x\n", err);
 }
 
-ParseRetRes parse_expr(TokenList *tokens);
+ParseRetRes parse_expr(Arena *a, TokenList *tokens);
 
 // Parse number / unary minus / parenthesis groupings.
-ParseRetRes parse_factor(TokenList *tokens) {
+ParseRetRes parse_factor(Arena *a, TokenList *tokens) {
     if (tokens == NULL) {
         // Note that this makes sure that `parse` never simultaneously returns
         // `is_ok` and a NULL-pointer for the AST.
@@ -350,7 +477,7 @@ ParseRetRes parse_factor(TokenList *tokens) {
 
     else if (tokens->token->type == TokenNumT ||
              tokens->token->type == TokenMinusT) {
-        Ast *res = malloc(sizeof(*res));
+        Ast *res = arena_alloc(a, sizeof(*res));
         res->type = SymbolNumT;
         res->as.numval = 1;
 
@@ -370,7 +497,7 @@ ParseRetRes parse_factor(TokenList *tokens) {
 
     else if (tokens->token->type == TokenLParenT) {
         tokens = tokens->next;
-        ParseRetRes r = parse_expr(tokens);
+        ParseRetRes r = parse_expr(a, tokens);
         if (!r.is_ok) {
             return r;
         }
@@ -390,8 +517,8 @@ ParseRetRes parse_factor(TokenList *tokens) {
 }
 
 // Parse multiplications / divisions.
-ParseRetRes parse_term(TokenList *tokens) {
-    ParseRetRes op1 = parse_factor(tokens);
+ParseRetRes parse_term(Arena *a, TokenList *tokens) {
+    ParseRetRes op1 = parse_factor(a, tokens);
     if (!op1.is_ok) {
         return op1;
     }
@@ -407,14 +534,14 @@ ParseRetRes parse_term(TokenList *tokens) {
         binop.operand1 = res;
 
         tokens = tokens->next;
-        ParseRetRes op2 = parse_factor(tokens);
+        ParseRetRes op2 = parse_factor(a, tokens);
         if (!op2.is_ok) {
             return op2;
         }
         binop.operand2 = op2.ok.ast;
         tokens = op2.ok.rest;
 
-        Ast *newres = malloc(sizeof(*newres));
+        Ast *newres = arena_alloc(a, sizeof(*newres));
         newres->type = SymbolBinopT;
         newres->as.binop = binop;
         res = newres;
@@ -424,8 +551,8 @@ ParseRetRes parse_term(TokenList *tokens) {
 }
 
 // Parse additions / subtractions.
-ParseRetRes parse_expr(TokenList *tokens) {
-    ParseRetRes op1 = parse_term(tokens);
+ParseRetRes parse_expr(Arena *a, TokenList *tokens) {
+    ParseRetRes op1 = parse_term(a, tokens);
     if (!op1.is_ok) {
         return op1;
     }
@@ -441,14 +568,14 @@ ParseRetRes parse_expr(TokenList *tokens) {
         binop.operand1 = res;
 
         tokens = tokens->next;
-        ParseRetRes op2 = parse_term(tokens);
+        ParseRetRes op2 = parse_term(a, tokens);
         if (!op2.is_ok) {
             return op2;
         }
         binop.operand2 = op2.ok.ast;
         tokens = op2.ok.rest;
 
-        Ast *newres = malloc(sizeof(*newres));
+        Ast *newres = arena_alloc(a, sizeof(*newres));
         newres->type = SymbolBinopT;
         newres->as.binop = binop;
         res = newres;
@@ -458,8 +585,8 @@ ParseRetRes parse_expr(TokenList *tokens) {
 }
 
 // Parse a list of tokens.
-ParseRetRes parse(TokenList *tokens) {
-    ParseRetRes res = parse_expr(tokens);
+ParseRetRes parse(Arena *a, TokenList *tokens) {
+    ParseRetRes res = parse_expr(a, tokens);
     assert(!(res.is_ok && res.ok.ast == NULL) &&
            "Error parsing: `parse` should never return is_ok and a NULL "
            "pointer for the AST");
@@ -777,7 +904,8 @@ Num mode_jit_ast(Ast *ast) {
  ******************************************************************************/
 
 void write_program_to_file(Str s, Str outpath) {
-    char *p = str_as_cstr(outpath);
+    ArenaTemp scratch = arena_get_scratch(NULL);
+    char *p = str_as_cstr(scratch.arena, outpath);
 
     FILE *file = fopen(p, "w");
     if (file == NULL) {
@@ -800,6 +928,8 @@ void write_program_to_file(Str s, Str outpath) {
                 outpath.buf);
         exit(1);
     }
+
+    arena_release_scratch(scratch);
 }
 
 // Wrap native x86_64 machine instructions into a runnable ELF file.
@@ -816,7 +946,7 @@ void write_program_to_file(Str s, Str outpath) {
 // ksv hello elf.ksy
 //
 // AI was also useful.
-Str build_elf(Str code_) {
+Str build_elf(Arena *a, Str code_) {
     u64 base_addr = 0x400000;
 
     // Wrap function in `code_` into a call. Also see
@@ -876,7 +1006,7 @@ Str build_elf(Str code_) {
     };
     Str code = {0};
     code.len = countof(call) + code_.len;
-    code.buf = malloc(code.len);
+    code.buf = arena_alloc(a, code.len);
     memcpy(code.buf, call, countof(call));
     memcpy(code.buf + countof(call), code_.buf, code_.len);
 
@@ -884,7 +1014,7 @@ Str build_elf(Str code_) {
 
     Str elf = {0};
     elf.len = sizeof(Elf64_Ehdr) + sizeof(Elf64_Phdr) + code.len;
-    elf.buf = malloc(elf.len);
+    elf.buf = arena_alloc(a, elf.len);
     memset(elf.buf, 0, elf.len);
 
     Elf64_Ehdr *ehdr = (Elf64_Ehdr *)elf.buf;
@@ -946,7 +1076,10 @@ Num run_program(Str path) {
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         close(pipefd[1]);
-        char *p = str_as_cstr(path);
+        // Note: we do not need a arena_release_scratch since the program exits
+        // right afterwards anyway.
+        ArenaTemp scratch = arena_get_scratch(NULL);
+        char *p = str_as_cstr(scratch.arena, path);
         execve(p, (char *[]){p, NULL}, (char *[]){NULL});
         fprintf(stderr, "Error execve %s\n", p);
         exit(1);
@@ -972,13 +1105,15 @@ Num mode_compile_ast(Ast *ast, Str outpath) {
     // printf("    Hexdump of x86_64 machine code\n");
     // hexdump(code);
 
-    Str elf = build_elf(code);
+    ArenaTemp scratch = arena_get_scratch(NULL);
+    Str elf = build_elf(scratch.arena, code);
     munmap(code.buf, code.len);
     printf("    Hexdump of final ELF file\n");
     hexdump(elf);
 
     printf("    Writing ELF to file %.*s\n", (int)outpath.len, outpath.buf);
     write_program_to_file(elf, outpath);
+    arena_release_scratch(scratch); // Lifetime of elf ends here.
 
     printf("    Running file %.*s\n", (int)outpath.len, outpath.buf);
     Num res = run_program(outpath);
@@ -1112,9 +1247,11 @@ void test() {
     };
 
     for (size_t i = 0; i < countof(input); i += 1) {
-        LexRetRes tokens = lex(input[i]);
+        ArenaTemp scratch = arena_get_scratch(NULL);
+
+        LexRetRes tokens = lex(scratch.arena, input[i]);
         assert(tokens.is_ok);
-        ParseRetRes ast_ = parse(tokens.ok.tokens);
+        ParseRetRes ast_ = parse(scratch.arena, tokens.ok.tokens);
         assert(ast_.is_ok);
         Ast *ast = ast_.ok.ast;
         printf("[+] Parsed AST: ");
@@ -1137,6 +1274,8 @@ void test() {
 
         putchar('\n');
         putchar('\n');
+
+        arena_release_scratch(scratch);
     }
 }
 
@@ -1145,6 +1284,9 @@ void test() {
  ******************************************************************************/
 
 int main(int argc, char *argv[]) {
+    arena_scratch1 = arena_create(0x1000 * 0x1000);
+    arena_scratch2 = arena_create(0x1000 * 0x1000);
+
     CliArgs args = parse_cli_args(argc, argv);
     if (!args.is_ok) {
         fprintf(stderr, "Cli Argument error\n\n");
@@ -1157,13 +1299,15 @@ int main(int argc, char *argv[]) {
     case ModeTest: test(); break;
 
     default: {
-        LexRetRes tokens = lex(args.ok.input);
+        ArenaTemp scratch = arena_get_scratch(NULL);
+
+        LexRetRes tokens = lex(scratch.arena, args.ok.input);
         if (!tokens.is_ok) {
             print_lex_error(tokens.err);
             exit(tokens.err.type);
         }
 
-        ParseRetRes ast_ = parse(tokens.ok.tokens);
+        ParseRetRes ast_ = parse(scratch.arena, tokens.ok.tokens);
         if (!ast_.is_ok) {
             print_parse_error(ast_.err);
             exit(ast_.err);
@@ -1183,14 +1327,17 @@ int main(int argc, char *argv[]) {
             break;
         default: break;
         }
+
+        arena_release_scratch(scratch);
     } break;
     }
+
+    arena_destroy(&arena_scratch1);
+    arena_destroy(&arena_scratch2);
 
     return 0;
 }
 
 // __asm__ volatile("int3"); // Debug break.
-
-// TODO switch from malloc to arena allocation
 
 // TODO update README after new output formats
