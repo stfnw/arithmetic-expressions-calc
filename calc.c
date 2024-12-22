@@ -1340,5 +1340,3 @@ int main(int argc, char *argv[]) {
 }
 
 // __asm__ volatile("int3"); // Debug break.
-
-// TODO update README after new output formats
