@@ -164,7 +164,7 @@ typedef struct {
 #define Str(s)                                                                 \
     (Str) { (u8 *)s, lengthof(s) }
 
-char *str_as_cstr(Arena *a, Str s) {
+static char *str_as_cstr(Arena *a, Str s) {
     char *buf = arena_alloc(a, s.len + 1);
     memcpy(buf, s.buf, s.len);
     buf[s.len] = '\0';
@@ -175,7 +175,7 @@ char *str_as_cstr(Arena *a, Str s) {
  * Other generic helper functions. *********************************************
  *******************************************************************************/
 
-void hexdump(Str s) {
+static void hexdump(Str s) {
     for (u64 i = 0; i < s.len; i += 1) {
         if (i % 0x10 == 0 && i != 0) {
             putchar('\n');
@@ -228,19 +228,19 @@ typedef struct {
     } as;
 } Token;
 
-void print_token(Token *t) {
-    switch (t->type) {
-    case TokenWhiteSpaceT: printf("TokenWhiteSpace\n"); break;
-    case TokenNumT: printf("TokenNum %ld\n", t->as.numval); break;
-    case TokenPlusT: printf("TokenPlus\n"); break;
-    case TokenMinusT: printf("TokenMinus\n"); break;
-    case TokenMultT: printf("TokenMult\n"); break;
-    case TokenDivT: printf("TokenDiv\n"); break;
-    case TokenLParenT: printf("TokenLParen\n"); break;
-    case TokenRParenT: printf("TokenRParen\n"); break;
-    default: assert(false && "Invalid token type");
-    }
-}
+// static void print_token(Token *t) {
+//     switch (t->type) {
+//     case TokenWhiteSpaceT: printf("TokenWhiteSpace\n"); break;
+//     case TokenNumT: printf("TokenNum %ld\n", t->as.numval); break;
+//     case TokenPlusT: printf("TokenPlus\n"); break;
+//     case TokenMinusT: printf("TokenMinus\n"); break;
+//     case TokenMultT: printf("TokenMult\n"); break;
+//     case TokenDivT: printf("TokenDiv\n"); break;
+//     case TokenLParenT: printf("TokenLParen\n"); break;
+//     case TokenRParenT: printf("TokenRParen\n"); break;
+//     default: assert(false && "Invalid token type");
+//     }
+// }
 
 typedef struct TokenList TokenList;
 struct TokenList {
@@ -248,11 +248,11 @@ struct TokenList {
     TokenList *next;
 };
 
-void print_token_list(TokenList *tokens) {
-    for (TokenList *i = tokens; i != NULL; i = i->next) {
-        print_token(i->token);
-    }
-}
+// static void print_token_list(TokenList *tokens) {
+//     for (TokenList *i = tokens; i != NULL; i = i->next) {
+//         print_token(i->token);
+//     }
+// }
 
 TokenList *prepend_to_token_list(Arena *a, TokenList *head, Token *token) {
     TokenList *new_head = arena_alloc(a, sizeof(TokenList));
@@ -261,7 +261,7 @@ TokenList *prepend_to_token_list(Arena *a, TokenList *head, Token *token) {
     return new_head;
 }
 
-bool is_digit(u8 c) { return '0' <= c && c <= '9'; }
+static bool is_digit(u8 c) { return '0' <= c && c <= '9'; }
 
 typedef enum {
     LexErrUnexpectedChar = 0x0101,
@@ -282,7 +282,7 @@ typedef struct {
     };
 } LexRetRes;
 
-void print_lex_error(struct LexErr err) {
+static void print_lex_error(struct LexErr err) {
     fprintf(stderr,
             "Error lexing: error type 0x%04x at input byte position %ld, char "
             "'%c'\n",
@@ -290,7 +290,7 @@ void print_lex_error(struct LexErr err) {
 }
 
 // Tokenize a string.
-LexRetRes lex(Arena *a, Str s) {
+static LexRetRes lex(Arena *a, Str s) {
     TokenList *list = NULL;
 
     for (u64 i = 0; i < s.len;) {
@@ -406,7 +406,7 @@ struct Ast {
 };
 
 // Pre-order traversal of the AST.
-void print_ast_(Ast *ast) {
+static void print_ast_(Ast *ast) {
     switch (ast->type) {
     case SymbolNumT: printf("%ld", ast->as.numval); break;
 
@@ -431,7 +431,7 @@ void print_ast_(Ast *ast) {
 }
 
 // Print AST as s-expression.
-void print_ast(Ast *ast) {
+static void print_ast(Ast *ast) {
     if (ast == NULL) {
         return;
     }
@@ -461,14 +461,14 @@ typedef struct {
     };
 } ParseRetRes;
 
-void print_parse_error(ParseErrType err) {
+static void print_parse_error(ParseErrType err) {
     fprintf(stderr, "Error parsing: error type 0x%04x\n", err);
 }
 
-ParseRetRes parse_expr(Arena *a, TokenList *tokens);
+static ParseRetRes parse_expr(Arena *a, TokenList *tokens);
 
 // Parse number / unary minus / parenthesis groupings.
-ParseRetRes parse_factor(Arena *a, TokenList *tokens) {
+static ParseRetRes parse_factor(Arena *a, TokenList *tokens) {
     if (tokens == NULL) {
         // Note that this makes sure that `parse` never simultaneously returns
         // `is_ok` and a NULL-pointer for the AST.
@@ -517,7 +517,7 @@ ParseRetRes parse_factor(Arena *a, TokenList *tokens) {
 }
 
 // Parse multiplications / divisions.
-ParseRetRes parse_term(Arena *a, TokenList *tokens) {
+static ParseRetRes parse_term(Arena *a, TokenList *tokens) {
     ParseRetRes op1 = parse_factor(a, tokens);
     if (!op1.is_ok) {
         return op1;
@@ -551,7 +551,7 @@ ParseRetRes parse_term(Arena *a, TokenList *tokens) {
 }
 
 // Parse additions / subtractions.
-ParseRetRes parse_expr(Arena *a, TokenList *tokens) {
+static ParseRetRes parse_expr(Arena *a, TokenList *tokens) {
     ParseRetRes op1 = parse_term(a, tokens);
     if (!op1.is_ok) {
         return op1;
@@ -585,7 +585,7 @@ ParseRetRes parse_expr(Arena *a, TokenList *tokens) {
 }
 
 // Parse a list of tokens.
-ParseRetRes parse(Arena *a, TokenList *tokens) {
+static ParseRetRes parse(Arena *a, TokenList *tokens) {
     ParseRetRes res = parse_expr(a, tokens);
     assert(!(res.is_ok && res.ok.ast == NULL) &&
            "Error parsing: `parse` should never return is_ok and a NULL "
@@ -601,7 +601,7 @@ ParseRetRes parse(Arena *a, TokenList *tokens) {
  ******************************************************************************/
 
 // Post-order traversal of the AST.
-Num interpret_ast_(Ast *ast) {
+static Num interpret_ast_(Ast *ast) {
     switch (ast->type) {
     case SymbolNumT: return ast->as.numval; break;
 
@@ -621,7 +621,7 @@ Num interpret_ast_(Ast *ast) {
     }
 }
 
-Num mode_interpret_ast(Ast *ast) {
+static Num mode_interpret_ast(Ast *ast) {
     printf("[+] Interpreting AST\n");
     Num res = interpret_ast_(ast);
     printf("    Result: %ld\n", res);
@@ -656,7 +656,7 @@ typedef struct {
     u64 sp; // Stack pointer (points to top currently free stack slot).
 } VM;
 
-VM vm_new() {
+static VM vm_new() {
     return (VM){
         .mem = {0},
         .ip = 0,
@@ -664,14 +664,14 @@ VM vm_new() {
     };
 }
 
-void vm_stack_push(VM *vm, Num num) {
+static void vm_stack_push(VM *vm, Num num) {
     assert(VM_MEM_SIZE - vm->sp < VM_STACK_SIZE &&
            "Stack upper bound exceeded");
     *((Num *)&vm->mem[vm->sp]) = num;
     vm->sp -= sizeof(Num);
 }
 
-Num vm_stack_pop(VM *vm) {
+static Num vm_stack_pop(VM *vm) {
     assert(VM_MEM_SIZE - sizeof(Num) > vm->sp && "Stack lower bound exceeded");
     vm->sp += sizeof(Num);
     Num res = *((Num *)&vm->mem[vm->sp]);
@@ -679,7 +679,7 @@ Num vm_stack_pop(VM *vm) {
 }
 
 // Post-order traversal of the AST.
-void vm_bytecode_compile_ast_(VM *vm, Ast *ast) {
+static void vm_bytecode_compile_ast_(VM *vm, Ast *ast) {
     switch (ast->type) {
     case SymbolNumT:
         vm->mem[vm->ip++] = OpPush;
@@ -703,14 +703,14 @@ void vm_bytecode_compile_ast_(VM *vm, Ast *ast) {
     }
 }
 
-void vm_bytecode_compile_ast(VM *vm, Ast *ast) {
+static void vm_bytecode_compile_ast(VM *vm, Ast *ast) {
     vm_bytecode_compile_ast_(vm, ast);
     // Prevent execution of garbage after the actual code.
     vm->mem[vm->ip++] = OpExit;
     vm->ip = 0; // Reset instruction pointer back to entry-point.
 }
 
-Num vm_run(VM *vm) {
+static Num vm_run(VM *vm) {
     while (vm->ip < VM_MEM_SIZE - VM_STACK_SIZE) {
         // "Fetch".
         u8 opcode = vm->mem[vm->ip];
@@ -747,7 +747,7 @@ end_while:
     return vm_stack_pop(vm);
 }
 
-void vm_disassemble_program(VM *vm) {
+static void vm_disassemble_program(VM *vm) {
     for (u64 i = 0; i < VM_MEM_SIZE - VM_STACK_SIZE;) {
         printf("         ");
         switch (vm->mem[i++]) {
@@ -766,7 +766,7 @@ void vm_disassemble_program(VM *vm) {
     }
 }
 
-Num mode_vm_ast(Ast *ast) {
+static Num mode_vm_ast(Ast *ast) {
     printf("[+] Running VM\n");
     VM vm = vm_new();
     vm_bytecode_compile_ast(&vm, ast);
@@ -791,7 +791,7 @@ typedef struct {
 typedef Num (*Jitfn)();
 
 // Extend the jit's code with given bytes.
-void jit_push(Jit *jit, int n, ...) {
+static void jit_push(Jit *jit, int n, ...) {
     va_list bytes;
     va_start(bytes, n);
     for (u8 i = 0; i < n; i++) {
@@ -802,7 +802,7 @@ void jit_push(Jit *jit, int n, ...) {
 }
 
 // Push a number to the stack at runtime via rax.
-void jit_stack_push(Jit *jit, Num n) {
+static void jit_stack_push(Jit *jit, Num n) {
     jit_push(jit, 2, 0x48, 0xb8);                   // mov  rax, n
     jit_push(jit, 1, (((u64)n) >> (0 * 8)) & 0xff); //     n in little endian
     jit_push(jit, 1, (((u64)n) >> (1 * 8)) & 0xff); //     n in little endian
@@ -816,7 +816,7 @@ void jit_stack_push(Jit *jit, Num n) {
 }
 
 // Post-order traversal of the AST.
-void jit_ast_(Ast *ast, Jit *jit) {
+static void jit_ast_(Ast *ast, Jit *jit) {
     switch (ast->type) {
     case SymbolNumT: jit_stack_push(jit, ast->as.numval); break;
 
@@ -849,8 +849,9 @@ void jit_ast_(Ast *ast, Jit *jit) {
 }
 
 #define JIT_MAX_SIZE 0x1000
+
 // Compile an AST to native x86_64 machine code.
-Str jit_ast(Ast *ast) {
+static Str jit_ast(Ast *ast) {
     Jit jit = {0};
     jit.n = JIT_MAX_SIZE;
     jit.i = 0;
@@ -878,7 +879,7 @@ Str jit_ast(Ast *ast) {
     return code;
 }
 
-Num mode_jit_ast(Ast *ast) {
+static Num mode_jit_ast(Ast *ast) {
     printf("[+] Running JIT compiler\n");
     Str code = jit_ast(ast);
 
@@ -903,7 +904,7 @@ Num mode_jit_ast(Ast *ast) {
  * and then run it. ************************************************************
  ******************************************************************************/
 
-void write_program_to_file(Str s, Str outpath) {
+static void write_program_to_file(Str s, Str outpath) {
     ArenaTemp scratch = arena_get_scratch(NULL);
     char *p = str_as_cstr(scratch.arena, outpath);
 
@@ -946,7 +947,7 @@ void write_program_to_file(Str s, Str outpath) {
 // ksv hello elf.ksy
 //
 // AI was also useful.
-Str build_elf(Arena *a, Str code_) {
+static Str build_elf(Arena *a, Str code_) {
     u64 base_addr = 0x400000;
 
     // Wrap function in `code_` into a call. Also see
@@ -1059,7 +1060,7 @@ Str build_elf(Arena *a, Str code_) {
 
 // Run the compiled program and read the resulting 8 bytes (i64) from its
 // stdout.
-Num run_program(Str path) {
+static Num run_program(Str path) {
     int pipefd[2];
     if (pipe(pipefd) == -1) {
         fprintf(stderr, "Error pipe\n");
@@ -1098,7 +1099,7 @@ Num run_program(Str path) {
     }
 }
 
-Num mode_compile_ast(Ast *ast, Str outpath) {
+static Num mode_compile_ast(Ast *ast, Str outpath) {
     printf("[+] Running AOT compiler\n");
     Str code = jit_ast(ast);
 
@@ -1144,9 +1145,9 @@ typedef struct {
     };
 } CliArgs;
 
-void usage() { printf("See README for usage information.\n"); }
+static void usage() { printf("See README for usage information.\n"); }
 
-CliArgs parse_cli_args(int argc, char *argv[]) {
+static CliArgs parse_cli_args(int argc, char *argv[]) {
     for (int i = 1; i < argc; i += 1) {
         if (!strcmp(argv[i], "--help")) {
             usage();
@@ -1192,7 +1193,7 @@ CliArgs parse_cli_args(int argc, char *argv[]) {
 
 // Run each of the different implementations on some random pre-generated
 // expressions and make sure the output agrees.
-void test() {
+static void test() {
     Str input[] = {
         Str("((3582 / (-1388 - ((-1689 * (-1750 - (2038 + (-2421 * 4)))) + "
             "-3950))) - ((-2755 * 3408) + (1687 / -789)))"),
