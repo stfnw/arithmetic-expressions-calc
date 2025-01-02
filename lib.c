@@ -656,7 +656,7 @@ typedef struct {
     u64 sp; // Stack pointer (points to top currently free stack slot).
 } VM;
 
-static VM vm_new() {
+static VM vm_new(void) {
     return (VM){
         .mem = {0},
         .ip = 0,
@@ -788,7 +788,7 @@ typedef struct {
     u64 i;   // Current position (only needed during jitting of the code).
 } Jit;
 
-typedef Num (*Jitfn)();
+typedef Num (*Jitfn)(void);
 
 // Extend the jit's code with given bytes.
 static void jit_push(Jit *jit, int n, ...) {
@@ -1145,7 +1145,7 @@ typedef struct {
     };
 } CliArgs;
 
-static void usage() { printf("See README for usage information.\n"); }
+static void usage(void) { printf("See README for usage information.\n"); }
 
 static CliArgs parse_cli_args(int argc, char *argv[]) {
     for (int i = 1; i < argc; i += 1) {
@@ -1225,7 +1225,7 @@ static void test_single_expr(Str input) {
 
 // Run each of the different implementations on some random pre-generated
 // expressions and make sure the output agrees.
-static void test() {
+static void test(void) {
     Str input[] = {
         Str("((3582 / (-1388 - ((-1689 * (-1750 - (2038 + (-2421 * 4)))) + "
             "-3950))) - ((-2755 * 3408) + (1687 / -789)))"),
