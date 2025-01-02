@@ -1,9 +1,9 @@
 .PHONY: all clean watch
 
 SOURCE := $(wildcard *.c)
-TARGET := $(SOURCE:.c=)
+TARGET := main
 
-CFLAGS := -Wall -Wextra -Wpedantic -ggdb -std=c11
+CFLAGS += -Wall -Wextra -Wpedantic -ggdb -std=c11
 
 all: $(TARGET)
 
