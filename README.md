@@ -10,7 +10,8 @@ with arithmetic expressions as an example.
 # Usage
 
 ```
-calc [interpret | vm | jit | compile outfile] expr
+make
+main [interpret | vm | jit | compile outfile] expr
 ```
 
 `expr` is an arithmetic expression.
@@ -21,19 +22,17 @@ but operators also follow the usual precedence rules regarding unary minus, mult
 # Tests
 
 ```
-./calc test
+./main test
 ```
 
 This computes the result for some pre-generated random arithmetic instructions using each implemented method and asserts that all methods agree with each other on the expression value.
 
 # Example runs
 
-(from 24b51bb160ec670caf0fb0cfc5a6d6d2ced34f12)
-
 ## Interpreter
 
 ```
-$ ./calc interpret "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
+$ ./main interpret "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 [+] Parsed AST: (+ (+ (+ (+ (* 3 2) (/ (/ 2 10) 19)) (/ (* (/ 3 10) 4) 10)) (* 2 (+ 4 5))) 9)
 
 [+] Interpreting AST
@@ -43,7 +42,7 @@ $ ./calc interpret "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 ## VM
 
 ```
-$ ./calc vm "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
+$ ./main vm "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 [+] Parsed AST: (+ (+ (+ (+ (* 3 2) (/ (/ 2 10) 19)) (/ (* (/ 3 10) 4) 10)) (* 2 (+ 4 5))) 9)
 
 [+] Running VM
@@ -80,7 +79,7 @@ $ ./calc vm "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 ## JIT compiler
 
 ```
-$ ./calc jit "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
+$ ./main jit "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 [+] Parsed AST: (+ (+ (+ (+ (* 3 2) (/ (/ 2 10) 19)) (/ (* (/ 3 10) 4) 10)) (* 2 (+ 4 5))) 9)
 
 [+] Running JIT compiler
@@ -107,7 +106,7 @@ $ ./calc jit "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 
 ```
 
-$ ./calc compile /tmp/out "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
+$ ./main compile /tmp/out "3 * 2 + 2 / 10 / 19 + (3/10) * 4 / 10 + 2 * (4+5) + 9"
 [+] Parsed AST: (+ (+ (+ (+ (* 3 2) (/ (/ 2 10) 19)) (/ (* (/ 3 10) 4) 10)) (* 2 (+ 4 5))) 9)
 
 [+] Running AOT compiler
@@ -149,11 +148,11 @@ Valgrind output on `48c03fc`:
 
 
 ```
-$ valgrind ./calc test > /dev/null
+$ valgrind ./main test > /dev/null
 ==205044== Memcheck, a memory error detector
 ==205044== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
 ==205044== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
-==205044== Command: ./calc test
+==205044== Command: ./main test
 ==205044==
 ==205044==
 ==205044== HEAP SUMMARY:
