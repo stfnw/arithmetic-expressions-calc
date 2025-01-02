@@ -28,6 +28,8 @@ This computes the result for some pre-generated random arithmetic instructions u
 
 # Example runs
 
+(from 24b51bb160ec670caf0fb0cfc5a6d6d2ced34f12)
+
 ## Interpreter
 
 ```
