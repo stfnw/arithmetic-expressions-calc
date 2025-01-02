@@ -1191,6 +1191,38 @@ static CliArgs parse_cli_args(int argc, char *argv[]) {
  * Tests ***********************************************************************
  ******************************************************************************/
 
+static void test_single_expr(Str input) {
+    ArenaTemp scratch = arena_get_scratch(NULL);
+
+    LexRetRes tokens = lex(scratch.arena, input);
+    assert(tokens.is_ok);
+    ParseRetRes ast_ = parse(scratch.arena, tokens.ok.tokens);
+    assert(ast_.is_ok);
+    Ast *ast = ast_.ok.ast;
+    printf("[+] Parsed AST: ");
+    print_ast(ast);
+    putchar('\n');
+
+    Num res_interpret = mode_interpret_ast(ast);
+    putchar('\n');
+    Num res_jit = mode_jit_ast(ast);
+    putchar('\n');
+    Num res_vm = mode_vm_ast(ast);
+    putchar('\n');
+    Num res_compile = mode_compile_ast(ast, Str("/tmp/out"));
+    putchar('\n');
+
+    assert(res_interpret == res_jit && res_interpret == res_vm &&
+           res_interpret == res_compile &&
+           "Different implementations do not agree with each other on the "
+           "resulting value of the evaluated expression");
+
+    putchar('\n');
+    putchar('\n');
+
+    arena_release_scratch(scratch);
+}
+
 // Run each of the different implementations on some random pre-generated
 // expressions and make sure the output agrees.
 static void test() {
@@ -1248,35 +1280,7 @@ static void test() {
     };
 
     for (size_t i = 0; i < countof(input); i += 1) {
-        ArenaTemp scratch = arena_get_scratch(NULL);
-
-        LexRetRes tokens = lex(scratch.arena, input[i]);
-        assert(tokens.is_ok);
-        ParseRetRes ast_ = parse(scratch.arena, tokens.ok.tokens);
-        assert(ast_.is_ok);
-        Ast *ast = ast_.ok.ast;
-        printf("[+] Parsed AST: ");
-        print_ast(ast);
-        putchar('\n');
-
-        Num res_interpret = mode_interpret_ast(ast);
-        putchar('\n');
-        Num res_jit = mode_jit_ast(ast);
-        putchar('\n');
-        Num res_vm = mode_vm_ast(ast);
-        putchar('\n');
-        Num res_compile = mode_compile_ast(ast, Str("/tmp/out"));
-        putchar('\n');
-
-        assert(res_interpret == res_jit && res_interpret == res_vm &&
-               res_interpret == res_compile &&
-               "Different implementations do not agree with each other on the "
-               "resulting value of the evaluated expression");
-
-        putchar('\n');
-        putchar('\n');
-
-        arena_release_scratch(scratch);
+        test_single_expr(input[i]);
     }
 }
 

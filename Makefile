@@ -7,8 +7,10 @@ CFLAGS += -Wall -Wextra -Wpedantic -ggdb -std=c11
 
 all: $(TARGET)
 
+main.o: main.c lib.c
+
 clean:
-	rm -fv -- $(TARGET)
+	rm -fv -- $(TARGET) $(wildcard *.o)
 
 watch:
 	while true ; do \
