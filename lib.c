@@ -305,7 +305,7 @@ static LexRetRes lex(Arena *a, Str s) {
             Token *token = arena_alloc(a, sizeof(*token));
             token->type = TokenNumT;
             token->as.numval = 0;
-            while (is_digit(s.buf[i])) {
+            while (i < s.len && is_digit(s.buf[i])) {
                 token->as.numval *= 10;
                 token->as.numval += s.buf[i] - '0';
                 i += 1;
