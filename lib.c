@@ -889,7 +889,7 @@ static void jit_ast_(Ast *ast, Jit *jit) {
     }
 }
 
-#define JIT_MAX_SIZE 0x1000
+#define JIT_MAX_SIZE 0x4000
 
 // Compile an AST to native x86_64 machine code.
 static Str jit_ast(Ast *ast) {
