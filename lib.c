@@ -600,19 +600,56 @@ static ParseRetRes parse(Arena *a, TokenList *tokens) {
  * Mode: interpret AST. ********************************************************
  ******************************************************************************/
 
+// This is the only method that implements protections against division by zero.
+
+typedef enum {
+    InterpretAstErrDivisionByZero,
+} InterpretAstErrType;
+
+typedef struct {
+    bool is_ok;
+    union {
+        Num num;
+        InterpretAstErrType err;
+    };
+} InterpretAstRetRes;
+
+static inline InterpretAstRetRes interpret_ast_ret_ok(Num num) {
+    return (InterpretAstRetRes){true, .num = num};
+}
+
 // Post-order traversal of the AST.
-static Num interpret_ast_(Ast *ast) {
+static InterpretAstRetRes interpret_ast_(Ast *ast) {
     switch (ast->type) {
-    case SymbolNumT: return ast->as.numval; break;
+    case SymbolNumT: return interpret_ast_ret_ok(ast->as.numval); break;
 
     case SymbolBinopT: {
-        Num op1 = interpret_ast_(ast->as.binop.operand1);
-        Num op2 = interpret_ast_(ast->as.binop.operand2);
+        InterpretAstRetRes op1 = interpret_ast_(ast->as.binop.operand1);
+        if (!op1.is_ok) {
+            return op1;
+        }
+        InterpretAstRetRes op2 = interpret_ast_(ast->as.binop.operand2);
+        if (!op2.is_ok) {
+            return op2;
+        }
         switch (ast->as.binop.type) {
-        case SymbolBinopPlusT: return op1 + op2; break;
-        case SymbolBinopMinusT: return op1 - op2; break;
-        case SymbolBinopMultT: return op1 * op2; break;
-        case SymbolBinopDivT: return op1 / op2; break;
+        case SymbolBinopPlusT:
+            return interpret_ast_ret_ok(op1.num + op2.num);
+            break;
+        case SymbolBinopMinusT:
+            return interpret_ast_ret_ok(op1.num - op2.num);
+            break;
+        case SymbolBinopMultT:
+            return interpret_ast_ret_ok(op1.num * op2.num);
+            break;
+        case SymbolBinopDivT:
+            if (op2.num == 0) {
+                return (InterpretAstRetRes){
+                    false, .err = InterpretAstErrDivisionByZero};
+            } else {
+                return interpret_ast_ret_ok(op1.num / op2.num);
+            }
+            break;
         default: assert(false && "Invalid binary operation type");
         }
     } break;
@@ -621,10 +658,14 @@ static Num interpret_ast_(Ast *ast) {
     }
 }
 
-static Num mode_interpret_ast(Ast *ast) {
+static InterpretAstRetRes mode_interpret_ast(Ast *ast) {
     printf("[+] Interpreting AST\n");
-    Num res = interpret_ast_(ast);
-    printf("    Result: %ld\n", res);
+    InterpretAstRetRes res = interpret_ast_(ast);
+    if (res.is_ok) {
+        printf("    Result: %ld\n", res.num);
+    } else {
+        fprintf(stderr, "    Error: Division by zero\n");
+    }
     return res;
 }
 
@@ -1203,7 +1244,14 @@ static void test_single_expr(Str input) {
     print_ast(ast);
     putchar('\n');
 
-    Num res_interpret = mode_interpret_ast(ast);
+    InterpretAstRetRes res_interpret_ = mode_interpret_ast(ast);
+    if (!res_interpret_.is_ok &&
+        res_interpret_.err == InterpretAstErrDivisionByZero) {
+        // Simply ignore error (it was printed to console before, so we don't
+        // ignore it silently).
+        return;
+    }
+    Num res_interpret = res_interpret_.num;
     putchar('\n');
     Num res_jit = mode_jit_ast(ast);
     putchar('\n');
